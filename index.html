@@ -190,13 +190,17 @@ main { max-width:900px; margin:0 auto; padding:20px 16px; padding-bottom:calc(20
   <button class="sport-tab active" onclick="filterSport('all',this)">🏆 Tous</button>
   <button class="sport-tab" onclick="filterSport('soccer',this)">⚽ Football</button>
   <button class="sport-tab" onclick="filterSport('basketball',this)">🏀 Basket</button>
+  <button class="sport-tab" onclick="filterSport('baseball',this)">⚾ Baseball</button>
   <button class="sport-tab" onclick="filterSport('tennis',this)">🎾 Tennis</button>
+  <button class="sport-tab" onclick="filterSport('americanfootball',this)">🏈 Foot US</button>
+  <button class="sport-tab" onclick="filterSport('mma',this)">🥊 MMA</button>
+  <button class="sport-tab" onclick="filterSport('icehockey',this)">🏒 Hockey</button>
 </div>
 
 <main>
   <div class="hero">
     <h1>PRONOSTICS<br><span>DU JOUR</span></h1>
-    <p>🏆 Coupe du Monde 2026 · Hier · Aujourd'hui · J+3 — Cotes en temps réel</p>
+    <p>Tous sports actifs · Hier · Aujourd'hui · J+3 — Cotes en temps réel</p>
   </div>
 
   <div id="errorBox" class="error-box" style="display:none"></div>
@@ -232,7 +236,7 @@ const FALLBACK_SPORTS = [
   'basketball_nba','basketball_euroleague'
 ];
 
-// Compétitions à toujours charger en priorité (même si l'API ne les liste pas comme "actives")
+// Compétitions à toujours charger en priorité
 const PRIORITY_SPORTS = ['soccer_fifa_world_cup'];
 
 const LEAGUE_LABELS = {
@@ -246,11 +250,15 @@ const LEAGUE_LABELS = {
   'soccer_brazil_campeonato':'Brasileirão','baseball_mlb':'MLB',
   'tennis_atp_wimbledon':'Wimbledon ATP','tennis_wta_wimbledon':'Wimbledon WTA',
   'tennis_atp_french_open':'ATP','tennis_wta_french_open':'WTA',
-  'mma_mixed_martial_arts':'MMA','cricket_international_t20':'Cricket T20'
+  'mma_mixed_martial_arts':'MMA','cricket_international_t20':'Cricket T20',
+  'americanfootball_nfl':'NFL','americanfootball_cfl':'CFL','americanfootball_ncaaf':'NCAAF',
+  'baseball_kbo':'KBO','baseball_npb':'NPB (Japon)','baseball_ncaa':'NCAA Baseball',
+  'basketball_wnba':'WNBA','boxing_boxing':'Boxe','aussierules_afl':'AFL',
+  'icehockey_nhl':'NHL','cricket_odi':'Cricket ODI','cricket_test_match':'Cricket Test'
 };
 
 // On garde ces familles de sports (le reste = courses, politique… ignoré)
-const KEEP_PREFIXES = ['soccer','basketball','tennis','baseball','mma','cricket'];
+const KEEP_PREFIXES = ['soccer','basketball','tennis','baseball','mma','cricket','americanfootball','aussierules','boxing','icehockey','rugbyleague','rugbyunion'];
 
 let allGames=[], currentFilter='all', selectedDate=null;
 
@@ -259,7 +267,7 @@ function toDS(date){ const y=date.getFullYear(),m=String(date.getMonth()+1).padS
 function fmtTime(iso){ return new Date(iso).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}); }
 function fmtShort(iso){ const d=new Date(iso); return d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})+' '+d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}); }
 function fmtFull(ds){ return new Date(ds+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'}).toUpperCase(); }
-function icon(k){ if(!k)return'🎯'; if(k.includes('soccer'))return'⚽'; if(k.includes('basketball'))return'🏀'; if(k.includes('tennis'))return'🎾'; return'🎯'; }
+function icon(k){ if(!k)return'🎯'; if(k.includes('soccer'))return'⚽'; if(k.includes('basketball'))return'🏀'; if(k.includes('tennis'))return'🎾'; if(k.includes('baseball'))return'⚾'; if(k.includes('americanfootball'))return'🏈'; if(k.includes('mma'))return'🥊'; if(k.includes('boxing'))return'🥊'; if(k.includes('icehockey'))return'🏒'; if(k.includes('cricket'))return'🏏'; if(k.includes('aussierules'))return'🏉'; if(k.includes('rugby'))return'🏉'; return'🎯'; }
 
 /* ── DATE PILLS ───────────────────────────────── */
 function buildPills(){
@@ -307,30 +315,38 @@ async function startLoad(){
   const from=new Date(now); from.setDate(from.getDate()-1); from.setHours(0,0,0,0);
   const to=new Date(now); to.setDate(to.getDate()+4); to.setHours(23,59,59,0);
 
-  // 1) Récupérer la liste des sports ACTIFS (s'adapte à la saison)
-  let sportsToQuery = FALLBACK_SPORTS;
+  // 1) Récupérer la liste des sports RÉELLEMENT ACTIFS (s'adapte à la saison)
+  let sportsToQuery = null;
   try {
     const res = await fetchT(`${ODDS_API_BASE}/sports/?apiKey=${ODDS_API_KEY}`);
-    if(res.ok){
-      const list = await res.json();
-      if(Array.isArray(list)){
-        const active = list
-          .filter(s => s.active && KEEP_PREFIXES.some(p => s.key.startsWith(p)))
-          .map(s => { if(s.title && !LEAGUE_LABELS[s.key]) LEAGUE_LABELS[s.key]=s.title; return s.key; });
-        if(active.length) sportsToQuery = active;
-      }
-    } else if(res.status===401){
-      showErr("Clé API refusée (401). La clé n'est plus valide. Créez-en une nouvelle gratuitement sur the-odds-api.com et remplacez-la dans le fichier.");
+    if(res.status===401){
+      showErr("Clé API refusée (401). La clé n'est plus valide. Créez-en une nouvelle gratuitement sur the-odds-api.com et remplacez-la dans le fichier index.html.");
       document.getElementById('loadingBox').style.display='none';
       return;
     }
+    if(res.status===429){
+      showErr("Quota API atteint (429). Le plan gratuit est limité à 500 requêtes/mois. Réessayez le mois prochain ou créez une nouvelle clé gratuite.");
+      document.getElementById('loadingBox').style.display='none';
+      return;
+    }
+    if(res.ok){
+      const list = await res.json();
+      if(Array.isArray(list)){
+        // On ne garde QUE les sports actifs, sans paris "outright" (vainqueur de tournoi),
+        // dans les familles qui nous intéressent
+        sportsToQuery = list
+          .filter(s => s.active && !s.has_outrights && KEEP_PREFIXES.some(p => s.key.startsWith(p)))
+          .map(s => { if(s.title) LEAGUE_LABELS[s.key]=s.title; return s.key; });
+      }
+    }
   } catch(e){ console.warn('liste sports:',e.message); }
 
-  // Toujours inclure les compétitions prioritaires (Coupe du Monde) en tête de liste
-  sportsToQuery = [...new Set([...PRIORITY_SPORTS, ...sportsToQuery])];
+  // Si la liste n'a pas pu être récupérée, on retombe sur la liste de secours
+  if(!sportsToQuery || !sportsToQuery.length) sportsToQuery = FALLBACK_SPORTS;
 
-  // 2) Récupérer les cotes pour chaque sport actif
-  let games=[], httpErrors=0, quotaHit=false;
+  // 2) Récupérer les cotes pour chaque sport actif.
+  // Un sport sans match renvoie une liste vide ou une 404 → c'est NORMAL, on ignore.
+  let games=[], authError=false, quotaHit=false;
   for(let i=0;i<sportsToQuery.length;i++){
     const sp=sportsToQuery[i];
     setMsg(`Chargement ${LEAGUE_LABELS[sp]||sp}…`,`${i+1}/${sportsToQuery.length} compétitions`);
@@ -340,21 +356,22 @@ async function startLoad(){
       if(res.ok){
         const d=await res.json();
         if(Array.isArray(d)) games=games.concat(d.map(g=>({...g,_sk:sp})));
-      } else {
-        httpErrors++;
-        if(res.status===429) quotaHit=true;
-        console.warn(sp,'HTTP',res.status);
+      } else if(res.status===401){
+        authError=true;
+      } else if(res.status===429){
+        quotaHit=true;
       }
+      // 404 / 422 = pas de match pour ce sport → on ignore silencieusement
     }catch(e){ console.warn(sp,e.message); }
   }
 
   if(!games.length){
     if(quotaHit){
-      showErr("Quota API atteint (429). Le plan gratuit est limité à 500 requêtes/mois. Réessayez le mois prochain ou créez une nouvelle clé.");
-    } else if(httpErrors>0){
-      showErr("L'API a refusé les requêtes. Vérifiez que votre clé est toujours valide sur the-odds-api.com.");
+      showErr("Quota API atteint (429). Le plan gratuit est limité à 500 requêtes/mois. Réessayez le mois prochain ou créez une nouvelle clé gratuite.");
+    } else if(authError){
+      showErr("Clé API refusée (401). Créez-en une nouvelle gratuitement sur the-odds-api.com et remplacez-la dans index.html.");
     } else {
-      showErr("Aucun match programmé en ce moment dans les compétitions suivies (foot, basket, tennis, baseball…). C'est probablement l'intersaison pour les grandes ligues. Réessayez quand des compétitions sont en cours, ou pendant une grande compétition d'été.");
+      showErr("Aucun match programmé dans les prochaines 24-48h pour les compétitions actives. Réessayez plus tard dans la journée, ou pendant une période où plus de matchs sont programmés. (La Coupe du Monde 2026 et les grandes ligues n'ont pas forcément de match cette nuit.)");
     }
     document.getElementById('loadingBox').style.display='none';
     return;
