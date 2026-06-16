@@ -335,7 +335,7 @@ async function startLoad(){
         // On ne garde QUE les sports actifs, sans paris "outright" (vainqueur de tournoi),
         // dans les familles qui nous intéressent
         sportsToQuery = list
-          .filter(s => s.active && !s.has_outrights && KEEP_PREFIXES.some(p => s.key.startsWith(p)))
+          .filter(s => s.active && KEEP_PREFIXES.some(p => s.key.startsWith(p)) && !s.key.includes('_winner') && !s.key.includes('championship_winner'))
           .map(s => { if(s.title) LEAGUE_LABELS[s.key]=s.title; return s.key; });
       }
     }
@@ -346,16 +346,28 @@ async function startLoad(){
 
   // 2) Récupérer les cotes pour chaque sport actif.
   // Un sport sans match renvoie une liste vide ou une 404 → c'est NORMAL, on ignore.
-  let games=[], authError=false, quotaHit=false;
+  // On ne met PAS de filtre de date dans la requête : on récupère tous les matchs
+  // à venir et on filtre ensuite côté client (plus robuste avec les fuseaux horaires).
+  let games=[], authError=false, quotaHit=false, sportsWithGames=0;
   for(let i=0;i<sportsToQuery.length;i++){
     const sp=sportsToQuery[i];
     setMsg(`Chargement ${LEAGUE_LABELS[sp]||sp}…`,`${i+1}/${sportsToQuery.length} compétitions`);
     try{
-      const url=`${ODDS_API_BASE}/sports/${sp}/odds/?apiKey=${ODDS_API_KEY}&regions=eu&markets=h2h&oddsFormat=decimal&dateFormat=iso&commenceTimeFrom=${from.toISOString()}&commenceTimeTo=${to.toISOString()}`;
+      const url=`${ODDS_API_BASE}/sports/${sp}/odds/?apiKey=${ODDS_API_KEY}&regions=eu,us,uk,au&markets=h2h&oddsFormat=decimal&dateFormat=iso`;
       const res=await fetchT(url);
       if(res.ok){
         const d=await res.json();
-        if(Array.isArray(d)) games=games.concat(d.map(g=>({...g,_sk:sp})));
+        if(Array.isArray(d) && d.length){
+          // On ne garde que les matchs dans notre fenêtre (hier → J+4)
+          const inWindow = d.filter(g=>{
+            const t=new Date(g.commence_time);
+            return t>=from && t<=to;
+          });
+          if(inWindow.length){
+            games=games.concat(inWindow.map(g=>({...g,_sk:sp})));
+            sportsWithGames++;
+          }
+        }
       } else if(res.status===401){
         authError=true;
       } else if(res.status===429){
